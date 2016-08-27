@@ -39,8 +39,6 @@ class ManiphestPolicyEnforcerAction extends HeraldAction {
 
     $rules = array();
 
-    $policy = new PhabricatorPolicy();
-
     $rules[] = array(
         'action' => PhabricatorPolicy::ACTION_ALLOW,
         'rule'   => 'ManiphestTaskAuthorPolicyRule',
@@ -59,25 +57,82 @@ class ManiphestPolicyEnforcerAction extends HeraldAction {
         'value'  => null
     );
 
-    $policy->setRules($rules)
-      ->setDefaultAction(PhabricatorPolicy::ACTION_DENY)
-      ->save();
+    $view_policy = id(new PhabricatorPolicy())
+      ->loadOneWhere('phid = %s', $task->getViewPolicy());
 
-    $adapter->queueTransaction(
-      id(new ManiphestTransaction())
-        ->setTransactionType(PhabricatorTransactions::TYPE_VIEW_POLICY)
-        ->setNewValue($policy->getPHID()));
+    if ($view_policy) {
+      $view_policy_rules = $view_policy->getRules();
+    } else {
+      $view_policy_rules = array();
+    }
 
-    $adapter->queueTransaction(
-      id(new ManiphestTransaction())
-        ->setTransactionType(PhabricatorTransactions::TYPE_EDIT_POLICY)
-        ->setNewValue($policy->getPHID()));
+    $view_policy_diff = false;
 
-    return new HeraldApplyTranscript(
-      $effect,
-      true,
-      pht('Reset Task Security')
-    );
+    foreach ($rules as $id => $rule) {
+      if (!in_array($rule, $view_policy_rules)) {
+        $view_policy_diff = true;
+        break;
+      }
+    }
+
+    foreach ($view_policy_rules as $id => $rule) {
+      if (!in_array($rule, $rules)) {
+        $view_policy_diff = true;
+        break;
+      }
+    }
+
+    $edit_policy = id(new PhabricatorPolicy())
+      ->loadOneWhere('phid = %s', $task->getEditPolicy());
+
+    if ($edit_policy) {
+      $edit_policy_rules = $edit_policy->getRules();
+    } else {
+      $edit_policy_rules = array();
+    }
+
+    $edit_policy_diff = false;
+
+    foreach ($rules as $id => $rule) {
+      if (!in_array($rule, $edit_policy_rules)) {
+        $edit_policy_diff = true;
+        break;
+      }
+    }
+
+    foreach ($edit_policy_rules as $id => $rule) {
+      if (!in_array($rule, $rules)) {
+        $edit_policy_diff = true;
+        break;
+      }
+    }
+
+    if ($view_policy_diff || $edit_policy_diff) {
+      $policy = id(new PhabricatorPolicy())
+        ->setRules($rules)
+        ->setDefaultAction(PhabricatorPolicy::ACTION_DENY)
+        ->save();
+
+      if ($view_policy_diff) {
+        $adapter->queueTransaction(
+          id(new ManiphestTransaction())
+            ->setTransactionType(PhabricatorTransactions::TYPE_VIEW_POLICY)
+            ->setNewValue($policy->getPHID()));
+      }
+
+      if ($edit_policy_diff) {
+        $adapter->queueTransaction(
+          id(new ManiphestTransaction())
+            ->setTransactionType(PhabricatorTransactions::TYPE_EDIT_POLICY)
+            ->setNewValue($policy->getPHID()));
+      }
+
+      return new HeraldApplyTranscript(
+        $effect,
+        true,
+        pht('Reset Task Security')
+      );
+    }
   }
 
   public function renderActionDescription($value) {
